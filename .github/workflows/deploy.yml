@@ -1,0 +1,71 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # CodeArtifact login — requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
+      # to be added as repository secrets (Settings → Secrets → Actions).
+      # Skip this step if you haven't added the secrets yet.
+      - name: Login to CodeArtifact
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: eu-west-1
+        run: |
+          pip install awscli --quiet
+          TOKEN=$(aws codeartifact get-authorization-token \
+            --domain cookieyes \
+            --domain-owner 275032138359 \
+            --region eu-west-1 \
+            --query authorizationToken \
+            --output text)
+          REGISTRY_HOST="cookieyes-275032138359.d.codeartifact.eu-west-1.amazonaws.com"
+          REGISTRY_URL="https://${REGISTRY_HOST}/npm/consent-sdk-alpha/"
+          cat > .npmrc <<EOF
+          registry=https://registry.npmjs.org/
+          @cookieyes:registry=${REGISTRY_URL}
+          //${REGISTRY_HOST}/npm/consent-sdk-alpha/:_authToken=${TOKEN}
+          //${REGISTRY_HOST}/npm/consent-sdk-alpha/:always-auth=true
+          EOF
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
